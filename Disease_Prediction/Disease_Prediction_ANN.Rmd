@@ -1,0 +1,1055 @@
+---
+title: "Disease Prediction using Machine Learning"
+author: "Juilee"
+date: "4/25/2020"
+output: html_document
+---
+
+***Introduction:***
+The objective of the assignment is to predict whether or not a patient has a certain unspecified disease.It is a binary classification problem.Multiple machine learning algorithms,including logistic
+regression, multiple artificial neural networks,SVM Linear, Random Forest and Gradient Boosting Classifier to build a disease diagnosis model will be used.
+
+Loading packages
+```{r message=FALSE,warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(caretEnsemble)
+library(rpart)
+library(randomForest)
+library(e1071)
+library(klaR)
+library(naivebayes)
+library(doParallel)
+library(Amelia)
+library(pROC)
+library(gridExtra)
+library(grid)
+library(resample)
+library(ggpubr)
+library(raster)
+library(forcats)
+library(yardstick)
+library(recipes)
+```
+
+Loading training dataset.
+```{r}
+d_train<- read.csv("/Users/juilee81/Desktop/DA/DA_HW_03/Disease\ Prediction\ Training.csv",header=TRUE)
+#View(d_train)
+```
+
+Checking for missing values column-wise and visualize the data:
+```{r}
+colSums(is.na(d_train))
+```
+```{r}
+#visualize the missing data
+missmap(d_train)
+```
+The plot and output shows columnwise distribution of NAs. No NA values are detected.
+
+**Outlier detection**
+```{r}
+summary(d_train)
+```
+```{r fig.height=20, fig.width=10}
+bxp_Age<- ggplot(d_train, aes(y=Age))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Height<- ggplot(d_train, aes(y=Height))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Weight<- ggplot(d_train, aes(y=Weight))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_High.Blood.Pressure<- ggplot(d_train, aes(y=High.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Low.Blood.Pressure<- ggplot(d_train, aes(y=Low.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+
+
+figure <- ggarrange(bxp_Age,bxp_Height,bxp_Weight,bxp_High.Blood.Pressure,bxp_Low.Blood.Pressure,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 3)
+figure
+```
+Outliers are detected in the variables of High and low blood Pressure, Weight and height.This can be seen from the summary and boxplots.
+
+Treating Outliers:
+```{r message=FALSE}
+#install.packages("raster")
+out<- function(q1,q3) {
+  l<- q1-1.5*(q3-q1)
+  u<- q3+1.5*(q3-q1)
+  print(paste(l,u))
+}
+#Clamping using inter-quartile range
+out(159,170)
+d_train$Height<-clamp(d_train$Height, lower=142.5, upper=186.5)
+out(65,82)
+d_train$Weight<-clamp(d_train$Weight, lower=39.5, upper=107.5)
+out(80,90)#low blood pressure
+out(120,140)#High blood pressure
+#Since low blood pressure cannot be greater than high blood pressure, therefore swapping lower value of High blood pressure and upper value of low blood pressure.
+d_train$High.Blood.Pressure<-clamp(d_train$High.Blood.Pressure, lower=105, upper=170)
+d_train$Low.Blood.Pressure<-clamp(d_train$Low.Blood.Pressure, lower=65, upper=90)
+```
+```{r fig.height=20, fig.width=10}
+bxp_Age<- ggplot(d_train, aes(y=Age))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Height<- ggplot(d_train, aes(y=Height))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Weight<- ggplot(d_train, aes(y=Weight))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_High.Blood.Pressure<- ggplot(d_train, aes(y=High.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Low.Blood.Pressure<- ggplot(d_train, aes(y=Low.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+
+
+figure <- ggarrange(bxp_Age,bxp_Height,bxp_Weight,bxp_High.Blood.Pressure,bxp_Low.Blood.Pressure,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 3)
+figure
+```
+All outliers are treated.
+
+**Normalising the numeric data**
+```{r}
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) }
+```
+```{r}
+d_train$Age <- normalize(d_train$Age)
+d_train$Height <- normalize(d_train$Height)
+d_train$Weight <- normalize(d_train$Weight)
+d_train$Low.Blood.Pressure <- normalize(d_train$Low.Blood.Pressure)
+d_train$High.Blood.Pressure  <- normalize(d_train$High.Blood.Pressure)
+```
+
+Exploratory Data Analysis:
+```{r}
+#Univariate Analysis of variables
+p1<-ggplot(d_train, aes(x=Cholesterol,  fill=Disease)) +
+  geom_bar(stat="count",position="dodge")+theme_bw()
+p2<-ggplot(d_train, aes(x=Glucose,  fill=Disease)) +
+  geom_bar(stat="count",position="dodge")+theme_bw()
+p3<-ggplot(d_train, aes(x=Smoke,  fill=Disease)) +
+  geom_bar(stat="count",position="dodge")+theme_bw()
+p4<-ggplot(d_train, aes(x=Exercise,  fill=Disease)) +
+  geom_bar(stat="count",position="dodge")+theme_bw()
+p5<-ggplot(d_train, aes(x=Gender,  fill=Disease)) +
+  geom_bar(stat="count",position="dodge")+theme_bw()
+grid.arrange(p1,p2,p3,p4,p5,ncol=3, nrow= 2)
+```
+```{r}
+#Bi-variate Analysis
+t1<-ggplot(d_train,aes(x=Age,fill=Cholesterol))+geom_density(col=NA,alpha=0.35)
+t2<-ggplot(d_train,aes(x=Age,fill=Glucose))+geom_density(col=NA,alpha=0.35)
+
+grid.arrange(t1,t2,ncol=2, nrow= 1)
+```
+The Age group that is between 50-60 years old have both "too high" Glucose and Cholesterol.
+
+Creating dummy variables of all the categorical variables
+```{r}
+library(fastDummies)
+d_dummies <- fastDummies::dummy_cols(d_train,select_columns=c('Gender','Cholesterol','Glucose'))
+d_dummies <- d_dummies[,c(-2,-7,-8)]
+```
+
+```{r}
+d_dummies$Disease <-factor(d_dummies$Disease,labels = c("False", "True"))
+```
+This is necessary because our output will be in the form of 2 classes, True or False. Where true will denote that a patient has a disease and false denotes that a person is disease free.
+
+```{r}
+#Renaming the columns
+colnames(d_dummies)[14] <- "Cholesterol_too_high"
+colnames(d_dummies)[17] <- "Glucose_too_high"
+```
+
+```{r fig.height=5, fig.width=10}
+g <- ggplot(d_train, aes(Exercise))
+g + geom_density(aes(fill=factor(Disease)), alpha=0.8) + 
+    labs(title="Density plot", 
+         subtitle="Exercise grouped by Disease or not disease",
+         x="Exercise",
+         fill="Disease")
+#pairs(Disease~., data=d_dummies[,1:9], col=d_dummies$Disease)
+```
+IF exercised,the number of people not getting disease is higher than people getting disease(orange part at the top).
+
+**Split data into training and test data sets**
+```{r}
+#Building a model
+indxTrain <- createDataPartition(y = d_dummies$Disease,p = 0.75,list = FALSE)
+training <- d_dummies[indxTrain,]
+testing <- d_dummies[-indxTrain,]
+prop.table(table(d_dummies$Disease)) * 100
+```
+```{r}
+testing$Disease <- factor(testing$Disease,labels = c("False", "True"))
+```
+
+
+---------------------------------------------------------------------------------------------------
+**BUILDING MODELS**
+**Logistic Regression**
+```{r logrbase, message=FALSE,warning=FALSE}
+set.seed(123)
+model_lr <- train(Disease ~ ., data = training, 
+                   method = "glm", family = "binomial")
+
+#print(model_lr)
+```
+```{r message=FALSE,warning=FALSE}
+predict_lr <- predict(model_lr, newdata = testing)
+confusionMatrix(predict_lr, testing$Disease)
+```
+
+*Regularization*
+ **Elastic Net Regression**
+Elastic net regression combines the properties of ridge and lasso regression. It works by penalizing the model using both the 1l2-norm1 and the 1l1-norm1.
+The first line of code creates the training control object train_cont which specifies how the repeated cross validation will take place. The second line builds the elastic regression model in which a range of possible alpha and lambda values are tested and their optimum value is selected. The argument tuneLength specifies that 10 different combinations of values for alpha and lambda that are to be tested.
+alpha and lambda values:Lambda is a term that controls the learning rate. In other words, how much change do you want the model to make during each iteration of learning.
+If lambda value is too high,  model will be simple, but we run the risk of underfitting our data. Model won't learn enough about the training data to make useful predictions.
+If  lambda value is too low, model will be more complex, and we run the risk of overfitting our data. Model will learn too much about the particularities of the training data, and won't be able to generalize to new data
+```{r elasticreg, message=FALSE, warning=FALSE}
+
+# Set training control
+train_cont <- trainControl(method = "repeatedcv",
+                              number = 10,
+                              repeats = 5,
+                              search = "random",
+                              verboseIter = FALSE)
+set.seed(123)
+# Train the model
+elastic_reg <- train(Disease ~ .,
+                           data = training,
+                           method = "glmnet",
+                           preProcess = c("center", "scale"),
+                           tuneLength = 10,
+                           trControl = train_cont)
+
+
+# Best tuning parameter
+elastic_reg$bestTune
+```
+```{r}
+predict_lr_e <- predict(elastic_reg, newdata = testing)
+confusionMatrix(predict_lr_e, testing$Disease)
+```
+After performing elastic net regression, the accuracy has slightly increased.
+```{r}
+base_tune_lr<- c("Base","Tuned")
+Accuracy_of_lr<- c(73.48,73.48)
+a_lr_models<-data.frame(base_tune_lr,Accuracy_of_lr)
+a_lr_models
+```
+
+**ANN0,1,2**
+```{r}
+rec_obj <- recipe(Disease ~ ., data = training) 
+```
+```{r}
+set.seed(123)
+x_train_tbl <- bake(rec_obj, new_data = training)%>%dplyr::select(-Disease)
+x_test_tbl <- bake(rec_obj, new_data = testing)%>% dplyr::select(-Disease)
+y_train_vec <- ifelse(pull(training, Disease) == "True", 1, 0)
+y_test_vec <-  ifelse(pull(testing, Disease) == "True", 1, 0)
+#str(x_train_tbl)
+
+```
+
+**0 hidden layer**
+```{r message=FALSE}
+library(keras)
+set.seed(123)
+model_keras0 <- keras_model_sequential()
+model_keras0 %>%
+layer_dense(units=1, kernel_initializer="uniform",activation = "sigmoid") %>%
+compile(optimizer = "adam",loss = "binary_crossentropy",metrics = c("accuracy"))
+
+history0 <- model_keras0 %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 32,
+  epochs = 30, 
+  validation_split = 0.3)
+#plot(history0)
+
+```
+
+```{r}
+yhat<- function(obj){
+set.seed(123)
+library(forcats)
+yhat_keras_class_vec <- predict_classes(object = obj, x = as.matrix(x_test_tbl)) %>%as.vector()
+yhat_keras_prob_vec <- predict_proba(object = obj, x = as.matrix(x_test_tbl)) %>%as.vector()
+estimates_keras_tbl <- tibble(truth = as.factor(y_test_vec)%>% fct_recode(true="1",false="0"),
+                              estimate = as.factor(yhat_keras_class_vec)%>% fct_recode(true="1",false="0"),
+                              class_prob = yhat_keras_prob_vec)
+
+library(yardstick)
+options(yardstick.event_first = F)
+estimates_keras_tbl %>% conf_mat(truth, estimate)
+estimates_keras_tbl %>% metrics(truth, estimate) 
+estimates_keras_tbl %>% roc_auc(truth, class_prob)
+tab<-data.frame(estimates_keras_tbl %>% metrics(truth, estimate),estimates_keras_tbl %>% roc_auc(truth, class_prob))
+tab
+}
+yhat(model_keras0)
+
+```
+*Hyperparameter tuning:*
+
+1. batch_size: Minibatch Gradient Descent:Batch size is set to more than one and less than the total number of examples in the training dataset.Large values give a learning process that converges slowly with accurate estimates of the error gradient.The problem with large batch sizes are “sharp” local minima which leads to overfitting.
+
+2. Epoch:One Epoch is when an ENTIRE dataset is passed forward and backward through the neural network only ONCE.As the number of epochs increases, more number of times the weight are changed in the neural network and the curve goes from underfitting to optimal to overfitting curve.
+
+3.A common way to mitigate overfitting is to put constraints on the complexity of a network by forcing its weights to only take on small values, which makes the distribution of weight values more “regular”. This is called “weight regularization”, and it is done by adding to the loss function of the network a cost associated with having large weights. This cost comes in two flavors:
+L1 regularization, where the cost added is proportional to the absolute value of the weights coefficients (i.e. to what is called the “L1 norm” of the weights).
+L2 regularization, where the cost added is proportional to the square of the value of the weights coefficients (i.e. to what is called the “L2 norm” of the weights). L2 regularization is also called weight decay in the context of neural networks. Don’t let the different name confuse you: weight decay is mathematically the exact same as L2 regularization.
+
+4. validation_split:Float between 0 and 1. The model sets apart the last fraction of the x and y data provided and use it as a validation set.
+
+5. No of hidden nodes
+```{r warning= FALSE,message= FALSE}
+#hyperparameter tuning 1
+set.seed(123)
+model_keras0_tune <- keras_model_sequential()
+model_keras0_tune %>%
+layer_dense(units=1, kernel_initializer="uniform",activation = "sigmoid",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+compile(optimizer = "adam",loss = "binary_crossentropy",metrics = c("accuracy"))
+```
+```{r}
+history0_tune <- model_keras0_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 32,
+  epochs = 10,
+  validation_split = 0.3,
+  verbose=0)
+
+
+#hyperparameter tuning 2
+set.seed(123)
+model_keras0_tune <- keras_model_sequential()
+model_keras0_tune %>%
+layer_dense(units=1, kernel_initializer="uniform",activation = "sigmoid",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+compile(optimizer = "adam",loss = "binary_crossentropy",metrics = c("accuracy"))
+history0_tune  <- model_keras0_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 64,
+  epochs = 50,
+  validation_split = 0.25,
+  verbose=0)
+
+
+#hyperparameter tuning 3
+set.seed(123)
+model_keras0_tune <- keras_model_sequential()
+model_keras0_tune %>%
+layer_dense(units=1, kernel_initializer="uniform",activation = "sigmoid",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+compile(optimizer = "adam",loss = "binary_crossentropy",metrics = c("accuracy"))
+history0_tune  <- model_keras0_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 256,
+  epochs = 100,
+  validation_split = 0.5,
+  verbose=0)
+yhat(model_keras0_tune)
+```
+```{r}
+tv_plot0 <- ggarrange(plot(history0),plot(history0_tune),
+                    labels = c("Base", "Tuned"),
+                    ncol = 1, nrow = 2)
+tv_plot0
+```
+Training loss and validation loss both are reducing, it proves that our data is not overfitting. Since training and validation accuracy is almost equal this model is good.
+```{r}
+base_tune0<- c("Base","Tuned")
+Accuracy_of_ANN0<- c(73.37,73.22)
+a0_models<-data.frame(base_tune0,Accuracy_of_ANN0)
+a0_models
+```
+Since slight decrease in accuracy of the validation data is normal.
+**1 hidden layer Base**
+```{r warning= FALSE,message= FALSE}
+library(keras)
+set.seed(123)
+model_keras1 <- keras_model_sequential()
+model_keras1 %>%
+  layer_dense(units = 16,
+              kernel_initializer = "uniform",
+              activation = "relu",
+              input_shape = ncol(x_train_tbl)) %>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+
+history1 <- model_keras1 %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 32,
+  epochs = 27, 
+  validation_split = 0.3
+)
+yhat(model_keras1)
+```
+
+
+*Hyperparameter tuning 1 hidden layer*
+```{r warning= FALSE,message= FALSE}
+
+#hyperparameter tuning 1
+set.seed(123)
+model_keras1_tune <- keras_model_sequential()
+model_keras1_tune %>%
+  layer_dense(units = 76,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl))%>%
+  layer_dropout(0.4)%>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+
+history1_tune <- model_keras1_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  #optimizer = optimizer_rmsprop(lr = 0.0001),
+  batch_size = 32,
+  epochs = 50,
+  validation_split = 0.3,
+  verbose=0)
+
+#hyperparameter tuning 2
+set.seed(123)
+model_keras1_tune <- keras_model_sequential()
+model_keras1_tune %>%
+  layer_dense(units = 76,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl))%>%
+  layer_dropout(0.4)%>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+history1_tune <- model_keras1_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 64,
+  epochs = 100,
+  validation_split = 0.25,
+  verbose=0)
+
+#hyperparameter tuning 3
+set.seed(123)
+model_keras1_tune <- keras_model_sequential()
+model_keras1_tune %>%
+  layer_dense(units = 76,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl))%>%
+  layer_dropout(0.4)%>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+history1_tune <- model_keras1_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 256,
+  epochs = 200,
+  validation_split = 0.2,
+  verbose=0)
+yhat(model_keras1_tune) 
+```
+```{r}
+tv_plot1 <- ggarrange(plot(history1),plot(history1_tune),
+                    labels = c("Base", "Tuned"),
+                    ncol = 1, nrow = 2)
+tv_plot1
+```
+Training loss and validation loss both are reducing, it proves that our data is not overfitting. Since training and validation accuracy is almost equal this model is better.
+```{r}
+base_tune1<- c("Base","Tuned")
+Accuracy_of_ANN1<- c(73.68,73.91)
+a1_models<-data.frame(base_tune1,Accuracy_of_ANN1)
+a1_models
+```
+Accuracy has increased.
+
+**2 hidden layer**
+```{r}
+library(keras)
+set.seed(123)
+model_keras2 <- keras_model_sequential()
+model_keras2 %>%
+  layer_dense(units = 176,
+              kernel_initializer = "uniform",
+              activation = "relu",
+              input_shape = ncol(x_train_tbl)) %>%
+  layer_dense(units = 150,
+              kernel_initializer = "uniform",
+              activation = "relu") %>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+history2 <- model_keras2 %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  batch_size = 32,
+  epochs = 30, 
+  validation_split = 0.3
+)
+yhat(model_keras2)
+```
+
+*Hyperparameter tuning for ANN2*
+```{r warning= FALSE,message=FALSE}
+#hyperparameter tuning 1
+set.seed(123)
+model_keras2_tune <- keras_model_sequential()
+model_keras2_tune %>%
+  layer_dense(units = 116,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl)) %>%
+  layer_dense(units = 110,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+
+history2_tune <- model_keras2_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  #optimizer = optimizer_rmsprop(lr = 0.0001),
+  batch_size = 32,
+  epochs = 10,
+  validation_split = 0.3,
+  verbose=0)
+
+
+#hyperparameter tuning 2
+set.seed(123)
+model_keras2_tune <- keras_model_sequential()
+model_keras2_tune %>%
+  layer_dense(units = 116,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl)) %>%
+  layer_dense(units = 110,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+history2_tune <- model_keras2_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  #optimizer = optimizer_rmsprop(lr = 0.0001),
+  batch_size = 64,
+  epochs = 30,
+  validation_split = 0.25,
+  verbose=0)
+
+
+#hyperparameter tuning 3
+set.seed(123)
+model_keras2_tune <- keras_model_sequential()
+model_keras2_tune %>%
+  layer_dense(units = 116,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001),
+              input_shape = ncol(x_train_tbl)) %>%
+  layer_dense(units = 110,
+              kernel_initializer = "uniform",
+              activation = "relu",kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+  layer_dense(units = 1, 
+              kernel_initializer = "uniform",
+              activation = "sigmoid") %>%
+  compile(optimizer = "adam",
+          loss = "binary_crossentropy",
+          metrics = c("accuracy"))
+history2_tune <- model_keras2_tune %>% fit(
+  as.matrix(x_train_tbl), 
+  y_train_vec, 
+  #optimizer = optimizer_rmsprop(lr = 0.0001),
+  batch_size = 128,
+  epochs =50,
+  validation_split = 0.2,
+  verbose=0)
+
+yhat(model_keras2_tune)
+```
+```{r}
+tv_plot2 <- ggarrange(plot(history2),plot(history2_tune),
+                    labels = c("Base", "Tuned"),
+                    ncol = 1, nrow = 2)
+tv_plot2
+```
+The loss and both training and validation accuracies have slightly decreased.
+```{r}
+base_tune2<- c("Base","Tuned")
+Accuracy_of_ANN2<- c(73.14,73.49)
+a2_models<-data.frame(base_tune2,Accuracy_of_ANN2)
+a2_models
+```
+
+**Decision Tree**
+```{r}
+#install.packages("MLmetrics")
+#library(MLmetrics)
+set.seed(123)
+dt_model = train(Disease ~ ., data = training, 
+                  method="rpart")
+predict_dt <- predict(dt_model,newdata = testing)
+confusionMatrix(predict_dt, testing$Disease)
+```
+*Hyperparameter tuning Decision Tree*
+```{r}
+library(caret)
+library(rpart)
+set.seed(123)
+dt_model_tune <- train(Disease ~ ., data = training, 
+                  metric = "Accuracy", 
+                  method = "rpart",
+                  tuneLength = 8,
+                  trControl=trainControl("repeatedcv",number=10,repeats=10,classProbs=TRUE),
+                  control =rpart.control(minsplit=20,minbucket=round(20/3),maxdepth=15,
+                                         tuneGrid = expand.grid(cp = seq(0, 0.1, 0.02))))
+```
+Hyper-parameters:
+minsplit: The minimum number of observations that must exist in a node in order for a split to be attempted
+minbucket: The minimum number of observations in any terminal node.
+maxdepth: The maxdepth parameter prevents the tree from growing past a certain depth / height.. The root node is treated a depth 0
+cp:The complexity parameter (cp) is the minimum improvement in the model needed at each node.
+```{r}
+predict_dt_tune <- predict(dt_model_tune,newdata = testing)
+confusionMatrix(predict_dt_tune, testing$Disease)
+```
+```{r}
+base_tune_dt<- c("Base","Tuned")
+Accuracy_of_dt<- c(72.31,73.88)
+a_dt_models<-data.frame(base_tune_dt,Accuracy_of_dt)
+a_dt_models
+```
+The accuracy is increased for the tuned model.
+
+**Building a model : SVM-Linear**
+*Hyperparameter Tuning for SVM-Linear:*
+```{r svm tune linear,warning= FALSE,message= FALSE}
+
+trctrl <- trainControl(method = "cv",number=3,repeats = 2)
+set.seed(3233)
+unwantedoutput1 <- capture.output(model_svm_linear_tune <- train(Disease ~ ., data =training,
+                          method = "svmLinear",
+                          metric="Accuracy",
+                          trControl=trctrl,
+                          tuneLength = 10,
+                          tuneGrid = expand.grid(C = seq(0.5, 1, 2))))
+
+```
+```{r}
+predict_svm_linear_tune <- predict(model_svm_linear_tune, newdata = testing)
+confusionMatrix(predict_svm_linear_tune, testing$Disease)
+```
+1.For a linear kernel, the choice of C does not seem to affect performance very much.
+
+
+**Building a model : Random forest**
+*Hyperparameter Tuning for Random forest:*
+```{r message= FALSE,warning=FALSE}
+control <- trainControl(method="cv", number=3, repeats=1)
+mtry <- c(1,2,5,10)
+tunegrid <- expand.grid(.mtry=mtry)
+```
+
+Each axis of the grid is an algorithm parameter, and points in the grid are specific combinations of parameters. Because we are only tuning one parameter, the grid search is a linear search through a vector of candidate values.mtry parameter is available in caret for tuning.
+1. **mtry:** Number of variables randomly sampled as candidates at each split.
+
+```{r rf tune}
+set.seed(124)
+model_rf_tune <- train(Disease~., data=training, method="rf",metric='Accuracy',tuneGrid=tunegrid, trControl=control)
+model_rf_tune
+```
+```{r}
+predict_rf_tune <- predict(model_rf_tune, newdata = testing)
+confusionMatrix(predict_rf_tune, testing$Disease)
+
+```
+
+
+**Building a model : Gradient Boosting**
+*Hyperparameter Tuning for Gradient Boosting:*
+```{r}
+#install.packages("doParallel")
+control <- trainControl(method="repeatedcv", number=3, repeats=3)
+tgrid<- expand.grid(n.trees =c(1080:1100), 
+                    interaction.depth=c(1:3), 
+                    shrinkage=c(0.001,0.2,0.3), 
+                    n.minobsinnode=15)
+```
+
+1.**n.trees:**
+The total number of trees in the sequence or ensemble.Since they can easily overfit if there are many number of trees,we must find the optimal number of trees that minimize the loss function of interest with cross validation.
+2.**shrinkage:**
+Determines the contribution of each tree on the final outcome and controls how quickly the algorithm proceeds down the gradient descent.Generally, the smaller this value, the more accurate the model can be but also will require more trees in the sequence.
+3.**interaction.depth:**
+Controls the depth of the individual trees.Higher depth trees allow the algorithm to capture unique interactions but also increase the risk of over-fitting.
+4.**n.minobsinnode:**
+Controls the complexity of each tree.Higher values help prevent a model from learning relationships which might be highly specific to the particular sample selected for a tree (overfitting) but smaller values can help with imbalanced target classes in classification problems.
+
+```{r gbm tune,warning= FALSE,message= FALSE}
+set.seed(124) #for reproducability
+unwantedoutput <- capture.output(model_gbm_tune <- train(Disease ~ ., data = training, method = "gbm",metric="Accuracy",tuneGrid=tgrid,trControl=control))
+
+```
+```{r}
+predict_gbm_tune <- predict(model_gbm_tune, newdata = testing)
+confusionMatrix(predict_gbm_tune, testing$Disease)
+```
+
+**Feature Importance of four models**
+```{r fig.height=5, fig.width=10}
+library(gbm)
+grid.arrange(plot(varImp(elastic_reg),main="Logistic Regression"),
+             plot(varImp(dt_model_tune),main="Decision Tree"),
+             plot(varImp(model_rf_tune),main="Random Forest"),
+             plot(varImp(model_gbm_tune),
+                  top=16 ,main="GBM"),nrow = 2, ncol = 2)
+```
+Feature importance is calculated as the decrease in node impurity weighted by the probability of reaching that node. The node probability can be calculated by the number of samples that reach the node, divided by the total number of samples. The higher the value the more important the feature.
+A decision tree is a simple, decision making-diagram.
+Random forests are a large number of trees, combined (using averages or "majority rules") at the end of the process.
+Gradient boosting machines also combine decision trees, but start the combining process at the beginning, instead of at the end.
+After comparing the feature importances of the above four models, The top 4 features are:
+High Blood Pressure (occurs as the top feature in all models)
+Age (is in the top 4 features in all models)
+Cholesterol too high & Weight (occurs twice in top 4 features)
+Cholesterol_normal, Height, Low Blood Pressure are also important features for all models. 
+
+***ROC AND AUC***
+An ROC curve (receiver operating characteristic curve) is a graph showing the performance of a classification model at all classification thresholds. 
+```{r message=FALSE, warning= FALSE}
+roc_func<- function(mo){
+probs <- predict(mo,testing,type="prob")
+head(probs)
+colnames(probs)[1]="False"
+colnames(probs)[2]="True"
+roc_curve <- roc(testing$Disease,probs$True)
+plot(roc_curve)  
+}
+
+listee<-c(roc_func(elastic_reg),
+          roc_func(dt_model_tune),
+          roc_func(model_rf_tune),
+          roc_func(model_gbm_tune))
+```
+
+
+***Area under the curve***
+AUC provides an aggregate measure of performance across all possible classification thresholds.
+A model whose predictions are 100% wrong has an AUC of 0.0; one whose predictions are 100% correct has an AUC of 1.0.
+```{r message=FALSE, warning=FALSE}
+
+auc_func<- function(mo){
+probs <- predict(mo,testing,type="prob")
+head(probs)
+colnames(probs)[1]="False"
+colnames(probs)[2]="True"
+auc_mo<-auc(testing$Disease,probs$True)
+auc_mo
+}
+auc_ANN0<-0.7964934  
+auc_ANN1<-0.8050782
+auc_ANN2<-0.8055849
+auc_lr<-auc_func(elastic_reg)
+auc_dt<-auc_func(dt_model_tune)
+auc_rf<-auc_func(model_rf_tune)
+auc_gbm<-auc_func(model_gbm_tune)
+
+
+```
+Comparing Areas under curve:
+```{r}
+Model <- c("Logistic Regression","Decision Trees","Random_Forest","Gradient_boosting","ANN0","ANN1","ANN2")
+AUC <- c(auc_lr,auc_dt,auc_rf,auc_gbm,auc_ANN0,auc_ANN1,auc_ANN2)
+
+auc<-data.frame(Model,AUC)
+auc<-auc[with(auc, order(-AUC)), ]
+auc
+```
+Gradient Boosting model has the highest AUC.
+
+Comparing performance of three models specifically: linear SVM, logistic
+regression, and single layer perceptron (with ZERO hidden layer).
+```{r}
+three_m<- c("SVM_Linear","Logistic Regression","ANN0")
+Acc<- c(73.25,73.48,73.22)
+acc_three_models<-data.frame(three_m,Acc)
+acc_three_models<-acc_three_models[with(acc_three_models, order(-Acc)), ]
+acc_three_models
+```
+The accuracies obtained from these three models are quite similar. If we look at the optimization problems of linear SVM and (regularized) LR, they are very similar: That is, they only differ in the loss function — SVM minimizes hinge loss while logistic regression minimizes logistic loss.
+A network without a hidden layer is actually identical to a logistic regression model if the logistic (sigmoidal) activation function is used.SVMs separates data without using kernal trick, hyperplanes are linear which are roughly equivalent to neural networks without an activation function.
+
+**Master table with Models,Accuracies, Hyperparameters and time taken**
+```{r}
+Model_name <- c("SVM_Linear",
+                "Logistic Regression",
+                "ANN0",
+                "Random Forest",
+                "Gradient Boosting",
+                "KNN",
+                "Naive Bayes",
+                "SVM Non_linear",
+                "Decision Trees",
+                "ANN1",
+                "ANN2")
+Hyperparameters <- c("C",
+                     "alpha & lambda",
+                     "(epochs,batch_size,kernel regularizer,no of hidden nodes,validation split)", 
+                     "(mtry)",
+                     "(n.trees,interaction.depth,shrinkage,n.minobsinnode)",
+                     "(k)",
+                     "(laplace tuning)",
+                     "(sigma,C)",
+                     "(minsplit,minbucket,maxdepth,cp)",
+                     "(epochs,batch_size,kernel regularizer,no of hidden nodes,validation split)",
+                     "(epochs,batch_size,kernel regularizer,no of hidden nodes,validation split)"
+                     )
+Accuracies <- c(73.25,
+                73.48,
+                73.22,
+                73.3,
+                73.97,
+                63.42,
+                60.49,
+                71.58,
+                72.88,
+                73.90,
+                73.49)
+Time <- c("2 hrs","5 mins" ,"15 mins","20 mins","35 mins","15 mins","2 mins","8 hrs","15 mins","15 mins","15 mins")
+
+ 
+
+acc_models<-data.frame(Model_name,Hyperparameters,Accuracies,Time)
+acc_models <- acc_models[with(acc_models, order(-Accuracies)), ]
+acc_models
+```
+The performance metric used is Accuracy. Gradient Boosting has the highest accuracy followed by ANN1.Since the data is balanced, accuracy is used. Used cross validation method.
+
+
+
+________________________________________________________________________________________________
+ 
+ SECTION 3: TESTING DATA
+
+
+
+1. Prediction & Interpretation on Test Data
+Reading the Testing data csv and storing it into a dataframe
+```{r}
+#Loading Weather Forecasting training dataset.
+
+d_test <- read.csv("/Users/juilee81/Desktop/DA/DA_HW_03/Disease\ Prediction\ Testing.csv",header = TRUE)
+#View(d_test)
+
+```
+
+Checking for missing values column-wise and visualize the data:
+```{r}
+colSums(is.na(d_test))
+```
+
+**Outlier detection**
+```{r}
+summary(d_test)
+```
+```{r fig.height=20, fig.width=10}
+bxp_Age<- ggplot(d_test, aes(y=Age))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Height<- ggplot(d_test, aes(y=Height))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Weight<- ggplot(d_test, aes(y=Weight))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_High.Blood.Pressure<- ggplot(d_test, aes(y=High.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+bxp_Low.Blood.Pressure<- ggplot(d_test, aes(y=Low.Blood.Pressure))+
+              geom_boxplot(outlier.colour="red", 
+              outlier.shape=16,
+              outlier.size=2, notch=FALSE)
+
+
+
+figure <- ggarrange(bxp_Age,bxp_Height,bxp_Weight,bxp_High.Blood.Pressure,bxp_Low.Blood.Pressure,
+                    labels = c("A", "B"),
+                    ncol = 2, nrow = 3)
+figure
+```
+Outliers are detected in the variables of High and low blood Pressure, Weight and height.This can be seen from the summary and boxplots.
+
+Treating Outliers:
+```{r message=FALSE}
+#install.packages("raster")
+out<- function(q1,q3) {
+  l<- q1-1.5*(q3-q1)
+  u<- q3+1.5*(q3-q1)
+  print(paste(l,u))
+}
+#Clamping using inter-quartile range
+out(159,170)
+d_test$Height<-clamp(d_test$Height, lower=142.5, upper=186.5)
+out(65,82)
+d_test$Weight<-clamp(d_test$Weight, lower=39.5, upper=107.5)
+out(80,90)#low blood pressure
+out(120,140)#High blood pressure
+#Since low blood pressure cannot be greater than high blood pressure, therefore swapping lower of High blood pressure and upper of low blood pressure.
+d_test$High.Blood.Pressure<-clamp(d_test$High.Blood.Pressure, lower=105, upper=170)
+d_test$Low.Blood.Pressure<-clamp(d_test$Low.Blood.Pressure, lower=65, upper=90)
+```
+
+Normalising the numeric data
+```{r}
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) }
+```
+```{r}
+d_test$Age <- normalize(d_test$Age)
+d_test$Height <- normalize(d_test$Height)
+d_test$Weight <- normalize(d_test$Weight)
+d_test$Low.Blood.Pressure <- normalize(d_test$Low.Blood.Pressure)
+d_test$High.Blood.Pressure  <- normalize(d_test$High.Blood.Pressure)
+
+
+```
+
+Creating dummy variables of all the categorical variables
+```{r}
+library(fastDummies)
+ID <- d_test$ID
+d_dummies_test <- fastDummies::dummy_cols(d_test,select_columns=c('Gender','Cholesterol','Glucose'))
+d_dummies_test <- d_dummies_test[,c(-1,-3,-8,-9)]
+colnames(d_dummies_test)[13] <- "Cholesterol_too_high"
+colnames(d_dummies_test)[16] <- "Glucose_too_high"
+
+```
+***Logistic model***
+```{r}
+predict_lr_final <- predict(elastic_reg,d_dummies_test)
+```
+
+***ANN0 model***
+```{r}
+predict_ANNO_final <- predict_classes(model_keras0_tune,x = as.matrix(d_dummies_test))
+
+```
+
+***ANN1 model***
+```{r}
+predict_ANN1_final <- predict_classes(model_keras1_tune,x = as.matrix(d_dummies_test))
+```
+***ANN2 model***
+```{r}
+predict_ANN2_final <- predict_classes(model_keras2_tune,x = as.matrix(d_dummies_test))
+```
+***Decision Tree model***
+```{r}
+predict_dt_final <- predict(dt_model_tune, newdata = d_dummies_test)
+```
+
+***INTO CSV***
+```{r csv}
+
+Disease_predictions_csv <-data.frame(ID,
+                            predict_dt_final,
+                            predict_lr_final,
+                            predict_ANNO_final,
+                            predict_ANN1_final,
+                            predict_ANN2_final) 
+
+colnames(Disease_predictions_csv) <- c('ID', 'DT', 'LR', 'ANN0', 'ANN1','ANN2')
+Disease_predictions_csv$ANN0 <-factor(Disease_predictions_csv$ANN0,labels = c("False", "True"))
+Disease_predictions_csv$ANN1 <-factor(Disease_predictions_csv$ANN1,labels = c("False", "True"))
+Disease_predictions_csv$ANN2 <-factor(Disease_predictions_csv$ANN2,labels = c("False", "True"))
+
+rownames(Disease_predictions_csv)<-NULL
+```
+
+*Writing to CSV*
+```{r}
+
+write.csv(Disease_predictions_csv,"HW_04_Juilee_Salunkhe_Predictions.csv")
+
+```
+
+***Conclusion***
+In this study we have explored the data of unspecified disease dataset and gain insights about the key factors that decide the whether or not the person has the disease or not using multiple machine learning algorithms and data analysis.We have also compared various machine learning models in terms of accuracy as a performance metric and found that Gradient Boosting has the highest accuracy.

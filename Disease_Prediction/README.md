@@ -1,0 +1,2 @@
+# Disease_Prediction
+The objective is to predict whether or not a patient has a certain unspecified disease.It is a binary classification problem.Multiple machine learning algorithms, including Naive Bayes, logistic regression, multiple artificial neural networks,SVM Linear,SVM Non Linear, Random Forest and Gradient Boosting Classifier to build a disease diagnosis model will be used.After Hyperparameter tuning, the models were compared.
