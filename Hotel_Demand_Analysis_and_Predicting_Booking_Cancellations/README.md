@@ -4,7 +4,7 @@ Using datasets from two hotels, the project aims to understand and analyze booki
 
 Poster :
 
-![Poster](https://github.com/juilee81/Hotel_Demand_Analysis_-_Predicting_Booking_Cancellations/blob/master/Images/Poster.jpg)
+![Poster](https://github.com/juilee81/Machine-Learning---NLP---Text-Mining---Deep-Learning/blob/main/Hotel_Demand_Analysis_and_Predicting_Booking_Cancellations/Images/Poster.jpg)
 
 
 Poster_Presentation Link on Youtube: https://www.youtube.com/watch?v=9CyjALbCqds&feature=youtu.be
